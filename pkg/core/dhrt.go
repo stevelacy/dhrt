@@ -1,7 +1,7 @@
 package dhrt
 
 import (
-	"github.com/satori/go.uuid"
+	"bytes"
 	"os"
 	"sync"
 	"time"
@@ -18,6 +18,7 @@ type Config struct {
 type Node struct {
 	ListenAddr   string // The address to listen on
 	AnnounceAddr string // The address for the other nodes to make requests
+	Id           []byte // The id of the node
 	Port         int
 	Version      int
 	Status       string // healthy, unhealthy, dead
@@ -42,11 +43,12 @@ type Stats struct {
 
 // Datum is the individual item
 type Datum struct {
-	Key     string
+	Key     []byte
 	Value   string
 	Version int64
 	Created int64
 	Updated int64
+	Hash    []byte
 }
 
 // Open the database
@@ -78,10 +80,10 @@ func (s *Store) Get(key string) (Datum, error) {
 // Set a single value with a key
 // Returns an id and error
 // This method will lock the mutex
-func (s *Store) Set(key string, value string) (Datum, error) {
-	if key == "" {
-		u := uuid.NewV4()
-		key = u.String()
+func (s *Store) Set(key []byte, value string) (Datum, error) {
+	var currentHash []byte = Hash(value) // always hash the data
+	if key == nil || bytes.Equal(key, []byte{}) {
+		key = currentHash
 	}
 	s.Lock()
 	defer s.Unlock()
@@ -90,33 +92,25 @@ func (s *Store) Set(key string, value string) (Datum, error) {
 	datum := Datum{
 		Value:   value,
 		Updated: now,
+		Hash:    currentHash,
 	}
 	// Check if the item exists, if not add a created timestamp
-	_, exists := data[key]
+	dKey := HashToString(key)
+	_, exists := data[dKey]
 	if !exists {
 		datum.Created = now
 		datum.Key = key
 	}
-	data[key] = datum
-	s.data = data
-	// Set here
+	data[dKey] = datum
+	s.data = data // Set here
 	return datum, nil
 }
 
 // Del removes one key/value datum
-func (s *Store) Del(key string) error {
+func (s *Store) Del(key []byte) error {
 	s.Lock()
 	defer s.Unlock()
-	delete(s.data, key)
-	// TODO: remove item from cluster
-	return nil
-}
-
-// DelAll removes an array of key/values
-func (s *Store) DelAll(keys []string) error {
-	for _, key := range keys {
-		s.Del(key)
-	}
+	delete(s.data, HashToString(key))
 	return nil
 }
 
